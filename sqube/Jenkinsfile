@@ -1,35 +1,15 @@
-/**
- # Copyright (C) 2017 Flux7 Labsi accounts@flux7.com
- # The entirety or part of this source code cannot copied and/or
- # distributed without the express permission of Flux7 Labs.
- # Please refer to individual project contract for details
- # on the rules governing use of this file.
- # For any questions regarding this license please contact support@flux7.com
- # FLUX7 PROPRIETARY AND CONFIDENTIAL
-
- This is a Jenkisnfile to bake a new Amazon Linux 2 AMI
- */
-
 @Library('flux7-lib')
 import com.flux7.deploy.*
 import com.flux7.utils.*
 
-// Load functions from Shared Lib
-def aws_utils_module = new AWSUtils()
-def crossaccount = new AssumeRole()
-def file_utils = new FileUtils()
-def aws_profile_module = new AWSProfile()
-def aws_orgs_module = new AWSOrganizations()
-def snr_login = admin
-def snr_password = admin
 node {
   def credentialsId = 'git-ssh-key'
   def master_role = 'master-role-admin'
-  def operation = "${OPERATION}"
-
+  def roles_dir = 'application'
+  def reportPath= '/var/lib/jenkins/jobs/$JOB_NAME/workspace/application'
   
-  // Checking out ansible modules repo
-  stage("Checkout Ansible Roles Repo") 
+  // Checking repo
+  stage("Checkout  Repo") 
   {
         checkout poll:false,
                 scm: [
@@ -39,38 +19,45 @@ node {
                         userRemoteConfigs: [[ url: "${GIT_URL}", credentialsId: credentialsId ]]
                 ]
   }
-
-  // Deploying sonarqube into server
+  
+  // Generating Coverage
+  stage("Generate Coverage report")
+  {
+   
+     try
+     {
+         sh """
+         /usr/local/bin/virtualenv venv
+         source venv/bin/activate
+         pip install -r ${reportPath}/python_lib/requirements.txt
+         pip install pytest-cov
+         pytest --cov-report xml:${reportPath}/coverage.xml --cov=${reportPath}/python_lib/flux7 ${reportPath}/python_lib/flux7/tests/
+         rm -rf venv
+         """    
+     }
+     catch(exc)
+     {
+            echo "error in coverage"
+     }
+  }
+  
   stage('SonarQube analysis') 
   {
     // requires SonarQube Scanner 2.8+
-        def scannerHome = tool 'SonarQube Scanner 2.8';
-        withSonarQubeEnv('My SonarQube Server') 
+        def scannerHome = tool 'sonarqube scanner';
+        withSonarQubeEnv('') 
         {
-            sh "${scannerHome}/bin/sonar-scanner" +
-            '-Dsonar.projectKey = com.huettermann:all:master ' +
-            '-Dsonar.projectKey = test' +
-            '-Dsonar.projectName = sonarDemo'+
-            '-Dsonar.projectVersion = 1.0'+
-            '-Dsonar.sources = /var/lib/jenkins/workspace/$JOB_NAME'+
-            '-Dsonar.sourceEncoding = UTF-8'+
-            '-Dsonar.web.host = sonarqube'+
-            '-Dsonar.web.port = 9000'+
-            '-Dsonar.login = $snr_login'+
-            '-Dsonar.password = $snr_password'+
-        }
-  }
-
-
-  stage("Quality Gate")
-  {
-    timeout(time: 1, unit: 'HOURS') 
-    { // Just in case something goes wrong, pipeline will be killed after a timeout
-        def qg = waitForQualityGate() // Reuse taskId previously collected by withSonarQubeEnv
-        if (qg.status != 'OK') 
-        {
-            error "Pipeline aborted due to quality gate failure: ${qg.status}"
-        }
+           sh "${scannerHome}/bin/sonar-scanner " + 
+            '-Dsonar.projectKey=$SONAR_PROJECT_NAME ' + 
+            '-Dsonar.projectName=$SONAR_PROJECT_NAME ' + 
+            '-Dsonar.projectVersion=1.0 ' +
+            '-Dsonar.sources=/var/lib/jenkins/jobs/$JOB_NAME/workspace/${roles_dir} '+
+            '-Dsonar.projectBaseDir=/var/lib/jenkins/jobs/$JOB_NAME/workspace/application '+
+            '-Dsonar.sourceEncoding=UTF-8 '+
+            '-Dsonar.python.coverage.reportPaths=${pathReport}/coverage.xml'
+            '-Dsonar.analysis.*'
+         }
     }
-  }
+    
 }
+ 
