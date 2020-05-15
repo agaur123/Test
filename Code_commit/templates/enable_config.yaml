@@ -1,0 +1,84 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Create AWS Config in AWS accounts.
+Metadata:
+  Stack:
+    Value: 1
+  VersionDate:
+    Value: 20170510
+  Identifier:
+    Value: enable_config
+  Input:
+    Description: Prefix to be used for config buckets
+Parameters:
+  AuditS3Bucket:
+    Type: String
+    Description: Unique name of the bucket for storing audit logs. Bucket names can contain lowercase letters, numbers, and hyphens. Each label must start and end with a lowercase letter or a number.
+    ConstraintDescription: "Use only lower case letters, numbers and hyphens"
+    MinLength: 2
+    AllowedPattern: '[a-z0-9\-]+'
+  SNSTopicName:
+    Type: String
+    Description: 'Central SNS topic Name for Config Delivery'
+  SnsTopicAccountID:
+    Type: String
+    Description: 'Central SNS topic Account Id'
+Resources:
+  ConfigRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSConfigRole
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - config.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: ConfigPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource:
+                  !Sub arn:aws:s3:::${AuditS3Bucket}/AWSLogs/${AWS::AccountId}/*
+                Condition:
+                  StringLike:
+                    s3:x-amz-acl: bucket-owner-full-control
+              - Effect: Allow
+                Action: s3:GetBucketAcl
+                Resource:
+                  !Sub arn:aws:s3:::${AuditS3Bucket}
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: '*'
+
+  ConfigRecorder:
+      Type: AWS::Config::ConfigurationRecorder
+      Properties:
+        Name: aws-config-recorder
+        RecordingGroup:
+          AllSupported: true
+          IncludeGlobalResourceTypes: true
+        RoleARN: !GetAtt [ConfigRole, Arn]
+
+  DeliveryChannel:
+      Type: AWS::Config::DeliveryChannel
+      Properties:
+          ConfigSnapshotDeliveryProperties:
+            DeliveryFrequency: Twelve_Hours
+          S3BucketName: !Ref AuditS3Bucket
+          SnsTopicARN: !Sub arn:aws:sns:${AWS::Region}:${SnsTopicAccountID}:${SNSTopicName}
+Outputs:
+  ConfigRecorder:
+    Value: !Ref ConfigRecorder
+    Description: Id of the config recorder
+  DeliveryChannel:
+    Value: !Ref DeliveryChannel
+    Description: Id of the Delivery Channel

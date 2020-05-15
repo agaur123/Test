@@ -1,0 +1,66 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Create SNS Topic in Audit account
+Parameters:
+  SNSTopicName:
+    Description: SNS Topic name
+    Type: String
+  SNSPublsihIDList:
+    Description: List of AWS Account IDs
+    Type: CommaDelimitedList
+    Default: ''
+
+Resources:
+  SNSTopicCreation:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: !Ref SNSTopicName
+      TopicName: !Ref SNSTopicName
+
+  SNSTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref SNSTopicCreation
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - 
+            Sid: main_account_all
+            Effect: Allow
+            Principal:
+              AWS: '*'
+            Action:
+              - 'SNS:Publish'
+              - 'SNS:RemovePermission'
+              - 'SNS:SetTopicAttributes'
+              - 'SNS:DeleteTopic'
+              - 'SNS:ListSubscriptionsByTopic'
+              - 'SNS:GetTopicAttributes'
+              - 'SNS:Receive'
+              - 'SNS:AddPermission'
+              - 'SNS:Subscribe'
+            Resource: !Ref SNSTopicCreation
+            Condition:
+              StringEquals:
+                'AWS:SourceOwner': !Ref AWS::AccountId
+          - 
+            Sid: sub_account_publish
+            Effect: Allow
+            Principal:
+              AWS: !Ref SNSPublsihIDList
+            Action: 'SNS:Publish'
+            Resource: !Ref SNSTopicCreation
+          - 
+            Sid: sub_account_subscribe
+            Effect: Allow
+            Principal:
+              AWS: !Ref SNSPublsihIDList
+            Action:
+              - 'SNS:Subscribe'
+              - 'SNS:Receive'
+            Resource: !Ref SNSTopicCreation
+
+Outputs:
+  SNSTopicARN:
+    Value: !Ref SNSTopicCreation
+    Description: SNS Topic ARN value

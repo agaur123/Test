@@ -1,0 +1,80 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Create required IAM groups for different Job functions
+Metadata:
+  Stack: 0
+  VersionDate: 2017-05-11
+
+Resources:
+  OpsGroup:
+    Type: AWS::IAM::Group
+    Properties:
+      GroupName: OpsGroup
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSSupportAccess
+        - arn:aws:iam::aws:policy/job-function/NetworkAdministrator
+      Path: /
+
+  AdminGroup:
+    Type: AWS::IAM::Group
+    Properties:
+      GroupName: AdminGroup
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess
+        - arn:aws:iam::aws:policy/AWSSupportAccess
+      Policies:
+        - PolicyName: DenyCloudtrailUpdate
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Action:
+                - cloudtrail:UpdateTrail
+                - cloudtrail:DeleteTrail
+                - cloudtrail:Stoplogging
+                Effect: Deny
+                Resource: '*'
+
+  DevGroup:
+    Type: AWS::IAM::Group
+    Properties:
+      GroupName: DevGroup
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/job-function/SystemAdministrator
+        - arn:aws:iam::aws:policy/AWSSupportAccess
+
+  AuditorGroup:
+    Type: AWS::IAM::Group
+    Properties:
+      GroupName: Auditors
+      Path: '/'
+      ManagedPolicyArns:
+       - arn:aws:iam::aws:policy/SecurityAudit
+       - arn:aws:iam::aws:policy/AWSSupportAccess
+
+Outputs:
+  DevGroupName:
+    Value: !Ref DevGroup
+    Description: IAM Role name for DevGroup
+  DevGroupArn:
+    Value: !GetAtt DevGroup.Arn
+    Description: IAM Role Arn for DevGroup
+  OpsGroupName:
+    Value: !Ref OpsGroup
+    Description: IAM Role name for OpsGroup
+  OpsGroupArn:
+    Value: !GetAtt OpsGroup.Arn
+    Description: IAM Role Arn for OpsGroup
+  AdminGroupName:
+    Value: !Ref AdminGroup
+    Description: IAM Role Name for AdminGroup
+  AdminGroupArn:
+    Value: !GetAtt AdminGroup.Arn
+    Description: IAM Role Arn for AdminGroup
+  AuditorGroupName:
+    Value: !Ref AuditorGroup
+    Description: IAM Role Name for AuditorGroup
+  AuditorGroupArn:
+    Value: !GetAtt AuditorGroup.Arn
+    Description: IAM Role Arn for AuditorGroup
+

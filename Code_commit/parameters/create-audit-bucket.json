@@ -1,0 +1,14 @@
+[
+  {
+    "ParameterKey": "BucketPrefix",
+    "ParameterValue": "bcfdemo"
+  },
+  {
+    "ParameterKey": "AuditAccountId",
+    "ParameterValue": "747711509935"
+  },
+  {
+    "ParameterKey": "KMSName",
+    "ParameterValue": "CustomerKMS"
+  }
+]

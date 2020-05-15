@@ -1,0 +1,11 @@
+[
+  {
+    "ParameterKey": "SNSTopicName",
+    "ParameterValue": "sns-hardening-notifications"
+  },
+  {
+    "ParameterKey": "SNSPublsihIDList",
+    "ParameterValue": ["747711509935","733749709143","589194595001"]
+    
+  }
+]

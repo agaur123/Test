@@ -1,0 +1,14 @@
+[
+  {
+    "ParameterKey": "AuditS3Bucket",
+    "ParameterValue": "bcfdemo-audit-us-east-1"
+  },
+  {
+    "ParameterKey": "SNSTopicName",
+    "ParameterValue": "sns-hardening-notifications"
+  },
+  {
+    "ParameterKey": "SnsTopicAccountID",
+    "ParameterValue": "747711509935"
+  } 
+]

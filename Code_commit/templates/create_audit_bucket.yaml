@@ -1,0 +1,262 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: "Creates an S3 bucket to store the Audit logs (CloudTrail, Config and VPC Flow logs) with access logging enabled"
+
+Parameters:
+  ######### General Parameters ###########
+  BucketPrefix:
+    Type: String
+    Description: Bucket Prefix used should be client name
+    MinLength: 2
+    ConstraintDescription: "use only lower case letters or numbers"
+    AllowedPattern: '[a-z0-9\-]+'
+  AuditAccountId:
+    Type: String
+    Description: Audit account ID
+    MaxLength: 12
+    MinLength: 12
+  KMSName:
+    Type: String
+    Description: Name of the KMS key
+    MinLength: 1
+    MaxLength: 256
+    AllowedPattern: '[a-zA-Z0-9\-_]+'
+    ConstraintDescription: "only alphanumeric and '_-/' max 256 characters"
+
+Mappings:
+  StorageClassMapping:
+    us-east-1:
+      Value: GLACIER
+    us-east-2:
+      Value: GLACIER
+    us-west-2:
+      Value: GLACIER
+    us-west-1:
+      Value: GLACIER
+    eu-west-1:
+      Value: GLACIER
+    ca-central-1:
+      Value: GLACIER
+    eu-west-2:
+      Value: GLACIER
+    eu-central-1:
+      Value: GLACIER
+    ap-southeast-2:
+      Value: GLACIER
+    ap-northeast-1:
+      Value: GLACIER
+    ap-south-1:
+      Value: GLACIER
+    ap-northeast-2:
+      Value: GLACIER
+    sa-east-1:
+      Value: STANDARD_IA
+
+Conditions:
+    IsGovCloud: !Equals [ us-gov-west-1, !Ref 'AWS::Region' ]
+
+Resources:
+  EncryptionKey:
+    Type: AWS::KMS::Key
+    DeletionPolicy: Retain
+    Properties: 
+      Description: "Audit Bucket and Cloudtrail encryption key"
+      KeyPolicy: 
+        Version: "2012-10-17"
+        Id: "key-policy"
+        Statement:
+          -
+            Sid: "Enable IAM User Permissions"
+            Effect: "Allow"
+            Principal:
+              AWS:
+                !Sub arn:aws:iam::${AuditAccountId}:root
+            Action: "kms:*"
+            Resource: "*"
+          - 
+            Sid: "Enable CloudTrail Permissions"
+            Effect: "Allow"
+            Principal:
+              Service:
+                - cloudtrail.amazonaws.com
+            Action: 
+              - "kms:Encrypt"
+              - "kms:Decrypt"
+              - "kms:ReEncrypt*"
+              - "kms:GenerateDataKey*"
+              - "kms:DescribeKey"
+            Resource: "*"
+  EncryptionKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: 
+        !Sub alias/${KMSName}
+      TargetKeyId: !Ref EncryptionKey
+
+  ArchiveLogsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketName:
+        !Sub ${BucketPrefix}-archive-${AWS::Region}
+      AccessControl: LogDeliveryWrite
+      LifecycleConfiguration:
+        Rules:
+          - Id: Transition90daysRetain7yrs
+            Status: Enabled
+            ExpirationInDays: 2555
+            Transition:
+              TransitionInDays: 90
+              StorageClass: !FindInMap [StorageClassMapping, !Ref "AWS::Region", Value]
+      VersioningConfiguration:
+        Status: Enabled
+
+  ArchiveLogsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    DependsOn: ArchiveLogsBucket
+    Properties:
+      Bucket: !Ref ArchiveLogsBucket
+      PolicyDocument:
+        Statement:
+          - Sid: Enforce HTTPS Connections
+            Action: s3:*
+            Effect: Deny
+            Principal: '*'
+            Resource: !Sub
+              - arn:${Partition}:s3:::${ArchiveLogsBucket}/*
+              - { Partition: !If [ IsGovCloud, aws-us-gov, aws ] }
+          - Sid: Restrict Delete* Actions
+            Action: s3:Delete*
+            Effect: Deny
+            Principal: '*'
+            Resource: !Sub
+              - arn:${Partition}:s3:::${ArchiveLogsBucket}/*
+              - { Partition: !If [ IsGovCloud, aws-us-gov, aws ] }
+          - Sid: DenyUnEncryptedObjectUploads
+            Effect: Deny
+            Principal: '*'
+            Action: s3:PutObject
+            Resource: !Sub
+              - arn:${Partition}:s3:::${ArchiveLogsBucket}/*
+              - { Partition: !If [ IsGovCloud, aws-us-gov, aws ] }
+
+  AuditS3Bucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      AccessControl: BucketOwnerFullControl
+      BucketName:
+        !Sub ${BucketPrefix}-audit-${AWS::Region}
+      VersioningConfiguration:
+        Status: Enabled
+      LoggingConfiguration:
+        DestinationBucketName: !Ref ArchiveLogsBucket
+        LogFilePrefix: auditlogs
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              KMSMasterKeyID: !Ref EncryptionKey
+              SSEAlgorithm: 'aws:kms'
+
+  AuditS3BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref AuditS3Bucket
+      PolicyDocument:
+        Statement:
+          - Sid: AclCheck
+            Effect: Allow
+            Principal:
+              Service:
+                - cloudtrail.amazonaws.com
+                - config.amazonaws.com
+                - !Sub logs.${AWS::Region}.amazonaws.com
+            Action: s3:GetBucketAcl
+            Resource: !Sub arn:aws:s3:::${AuditS3Bucket}
+          - Sid: PutObj
+            Effect: Allow
+            Principal:
+              Service:
+                - cloudtrail.amazonaws.com
+                - config.amazonaws.com
+                - !Sub logs.${AWS::Region}.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub arn:aws:s3:::${AuditS3Bucket}/*
+            Condition:
+              StringEquals:
+                s3:x-amz-acl: bucket-owner-full-control
+          - Sid: Enforce HTTPS Connections
+            Action: s3:*
+            Effect: Deny
+            Principal: '*'
+            Resource: !Sub arn:aws:s3:::${AuditS3Bucket}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+          - Sid: Restrict Delete* Actions
+            Action: s3:Delete*
+            Effect: Deny
+            Principal: '*'
+            Resource: !Sub arn:aws:s3:::${AuditS3Bucket}/*
+  FlowlogsS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: BucketOwnerFullControl
+      BucketName:
+        !Sub ${BucketPrefix}-vpc-flow-logs-audit
+      LifecycleConfiguration:
+        Rules:
+          -
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 365
+            ExpirationInDays: 365
+            Id: logslcpolicy
+            NoncurrentVersionExpirationInDays: 365
+            NoncurrentVersionTransitions:
+              - StorageClass: GLACIER
+                TransitionInDays: 90
+            Status: Enabled
+            Transitions:
+              - StorageClass: GLACIER
+                TransitionInDays: 90
+
+  FlowlogsS3BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FlowlogsS3Bucket
+      PolicyDocument:
+        Statement:
+          - Sid: S3 get bucket acl
+            Effect: Allow
+            Action: s3:GetBucketAcl
+            Principal:
+              Service:
+                - !Sub "logs.${AWS::Region}.amazonaws.com"
+                - delivery.logs.amazonaws.com
+            Resource:
+              - !Sub arn:aws:s3:::${FlowlogsS3Bucket}/*
+              - !Sub arn:aws:s3:::${FlowlogsS3Bucket}
+          - Sid: Account Access
+            Effect: Allow
+            Action: s3:PutObject
+            Principal:
+              Service:
+                - !Sub "logs.${AWS::Region}.amazonaws.com"
+                - delivery.logs.amazonaws.com
+            Resource:
+              - !Sub arn:aws:s3:::${FlowlogsS3Bucket}/*
+              - !Sub arn:aws:s3:::${FlowlogsS3Bucket}
+Outputs:
+  AuditBucketName:
+    Value: !Ref AuditS3Bucket
+    Export:
+      Name: !Sub ${BucketPrefix}-AuditBucket
+    Description: Name of the Audit Bucket
+  ArchiveLogsBucket:
+    Value: !Ref ArchiveLogsBucket
+    Export:
+      Name: !Sub ${BucketPrefix}-ArchiveLogsBucket
+    Description: Name of the  Bucket where access logs are stored
+  FlowlogsS3BucketName:
+    Value: !Ref FlowlogsS3Bucket
+    Export:
+      Name: !Sub FlowlogsS3Bucket

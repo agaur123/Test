@@ -1,0 +1,88 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Enable FlowLogs for existing VPCs in AWS accounts and regions specified.
+Parameters:
+  ######### General Parameters ###########
+  BucketPrefix:
+    Type: String
+    Description: Bucket Prefix that was used while creating flow logs bucket
+    MinLength: 2
+    ConstraintDescription: "use only lower case letters or numbers"
+    AllowedPattern: '[a-z0-9\-]+'
+Resources:
+    LambdaIAMRole:
+          Type: "AWS::IAM::Role"
+          Properties:
+            Path: "/lambda/servicerole/"
+            ManagedPolicyArns:
+              - arn:aws:iam::aws:policy/AmazonEC2FullAccess
+              - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+              - arn:aws:iam::aws:policy/AmazonS3FullAccess
+            AssumeRolePolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                   - Effect: "Allow"
+                     Principal:
+                        Service: [lambda.amazonaws.com]
+                     Action:
+                        - sts:AssumeRole
+            Path: /
+            Policies:
+              - PolicyName: flowlogs-limited-permissions
+                PolicyDocument:
+                  Version: 2012-10-17
+                  Statement:
+                    - Effect: Allow
+                      Action:
+                        - logs:CreateLogDelivery
+                      Resource: "*"
+
+    FunctionToEnableFlowLogs:
+          Type: "AWS::Lambda::Function"
+          Properties:
+             Environment:
+               Variables:
+                 bucketprefix: !Sub ${BucketPrefix}
+             Code:
+                ZipFile: |
+                  import boto3
+                  import os
+                  def lambda_handler(event, context):
+                    bucket_name = os.environ.get('bucketprefix', None)
+                    if not bucket_name:
+                      raise Exception("Bucket name not passed. Failing")
+                    ec2 = boto3.resource('ec2')
+                    client = boto3.client('ec2')
+                    resourceids = []
+                    vpcs = ec2.vpcs.all()
+                    for vpc in vpcs:
+                      resourceids.append(vpc.id)
+                    response = client.create_flow_logs(
+                        ResourceIds=resourceids,
+                        ResourceType='VPC',
+                        TrafficType='ALL',
+                        LogDestinationType='s3',
+                        LogDestination='arn:aws:s3:::{bucket_name}-vpc-flow-logs-audit'.format(bucket_name=bucket_name)
+                      )
+             Description: "Attach Flowlogs to VPC to send data to s3"
+             Handler: index.lambda_handler
+             MemorySize: 1024
+             Role: !GetAtt LambdaIAMRole.Arn
+             Runtime: python3.6
+             Timeout: 300
+
+    ScheduledRule:
+      Type: AWS::Events::Rule
+      Properties:
+        Description: Scheduled rule to enable flow logs
+        ScheduleExpression: !Sub "rate(15 minutes)"
+        Targets:
+        - Arn: !GetAtt FunctionToEnableFlowLogs.Arn
+          Id: "EnableFlowLogs"
+
+    PermissionForEventsToInvokeLambda:
+      Type: "AWS::Lambda::Permission"
+      Properties:
+        FunctionName: !Ref FunctionToEnableFlowLogs
+        Action: "lambda:InvokeFunction"
+        Principal: "events.amazonaws.com"
+        SourceArn: !GetAtt ScheduledRule.Arn

@@ -1,0 +1,112 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Remove default VPC from AWS account.
+Resources:
+    LambdaIAMRole:
+          Type: "AWS::IAM::Role"
+          Properties:
+            Path: "/lambda/servicerole/"
+            ManagedPolicyArns:
+              - arn:aws:iam::aws:policy/AmazonEC2FullAccess
+              - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+            AssumeRolePolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                   - Effect: "Allow"
+                     Principal:
+                        Service: [lambda.amazonaws.com]
+                     Action:
+                        - sts:AssumeRole
+
+    FunctionToRemoveDefaultVPC:
+          Type: "AWS::Lambda::Function"
+          Properties:
+             Code:
+                ZipFile: |
+                  import boto3
+                  import logging
+                  log = logging.getLogger()
+                  log.setLevel(logging.INFO)
+
+
+                  def remove_default_vpc(region):
+                      client = boto3.client('ec2', region_name=region)
+                      attributes = client.describe_account_attributes(AttributeNames=['default-vpc'])
+                      vpc_id = 'none'
+                      for attribute in attributes['AccountAttributes']:
+                          if attribute['AttributeName'] == 'default-vpc':
+                              vpc_id = attribute['AttributeValues'][0]['AttributeValue']
+                              break
+                      if vpc_id != 'none':
+                          vpc_info = client.describe_vpcs(VpcIds=[vpc_id])['Vpcs'][0]
+                          ipv6 = vpc_info.get('Ipv6CidrBlockAssociationSet')
+                          if ipv6:
+                              for ass in ipv6:
+                                  client.disassociate_vpc_cidr_block(AssociationId=ass.get('AssociationId'))
+                          nifs = client.describe_network_interfaces(Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}])
+                          for nif in nifs['NetworkInterfaces']:
+                              client.delete_network_interface(NetworkInterfaceId=nif['NetworkInterfaceId'])
+
+                          igw = client.describe_internet_gateways(Filters=[{'Name': 'attachment.vpc-id', 'Values': [vpc_id]}])
+                          if igw['InternetGateways']:
+                              igw_id = igw['InternetGateways'][0]['InternetGatewayId']
+                              client.detach_internet_gateway(InternetGatewayId=igw_id, VpcId=vpc_id)
+                              client.delete_internet_gateway(InternetGatewayId=igw_id)
+                          client.associate_dhcp_options(DhcpOptionsId='default', VpcId=vpc_id)
+                          subs = client.describe_subnets(Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}])
+                          if subs['Subnets']:
+                              for sub in subs['Subnets']:
+                                  client.delete_subnet(SubnetId=sub['SubnetId'])
+                          rtbs = client.describe_route_tables(Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}])
+                          if rtbs:
+                              for tbl in rtbs['RouteTables']:
+                                  if tbl['Associations']:
+                                      for ass in tbl['Associations']:
+                                          if not ass['Main']:
+                                              client.delete_route_table(RouteTableId=ass['RouteTableId'])
+                                  else:
+                                      client.delete_route_table(RouteTableId=tbl['RouteTableId'])
+
+                          sgps = client.describe_security_groups(Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}])
+                          if sgps['SecurityGroups']:
+                              for sg in sgps['SecurityGroups']:
+                                  if sg['GroupName'] == 'default':
+                                      continue
+                                  client.delete_security_group(GroupId=sg['GroupId'])
+
+                          acls = client.describe_network_acls(Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}])
+                          if acls:
+                              for acl in acls['NetworkAcls']:
+                                  if not acl['IsDefault']:
+                                      client.delete_network_acl(NetworkAclId=acl['NetworkAclId'])
+                          client.delete_vpc(VpcId=vpc_id)
+
+
+                  def lambda_handler(event, context):
+                      ec2 = boto3.client('ec2')
+                      regions = ec2.describe_regions()['Regions']
+                      for region in regions:
+                          print("Removing default VPC from {0}".format(region['RegionName']))
+                          remove_default_vpc(region['RegionName'])
+             Description: "Remove default VPC"
+             Handler: index.lambda_handler
+             MemorySize: 1024
+             Role: !GetAtt LambdaIAMRole.Arn
+             Runtime: python3.6
+             Timeout: 300
+
+    ScheduledRule:
+      Type: AWS::Events::Rule
+      Properties:
+        Description: Scheduled rule to remove default VPCs
+        ScheduleExpression: !Sub "rate(30 minutes)"
+        Targets:
+        - Arn: !GetAtt FunctionToRemoveDefaultVPC.Arn
+          Id: "RemoveDefaultVPC"
+
+    PermissionForEventsToInvokeLambda:
+      Type: "AWS::Lambda::Permission"
+      Properties:
+        FunctionName: !Ref FunctionToRemoveDefaultVPC
+        Action: "lambda:InvokeFunction"
+        Principal: "events.amazonaws.com"
+        SourceArn: !GetAtt ScheduledRule.Arn

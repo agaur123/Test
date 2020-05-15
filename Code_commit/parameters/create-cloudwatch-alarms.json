@@ -1,0 +1,22 @@
+[
+  {
+    "ParameterKey": "KMSName",
+    "ParameterValue": "CustomerKMS"
+  },
+  {
+    "ParameterKey": "NotifyEmail",
+    "ParameterValue": "aman@flux7.com"
+  },
+  {
+    "ParameterKey": "KMSRegion",
+    "ParameterValue": "us-east-1"
+  },
+  {
+    "ParameterKey": "AuditAccountId",
+    "ParameterValue": "747711509935"
+  },
+  {
+    "ParameterKey": "AuditS3Bucket",
+    "ParameterValue": "bcfdemo-audit-us-east-1"
+  }
+]

@@ -1,0 +1,244 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Create a multi-region trail with a CloudWatch Log group and monitoring for security related events.
+
+Metadata:
+  Stack:
+    Value: 1
+  VersionDate:
+    Value: 20160510
+  Identifier:
+    Value: enable_cloudwatch_alarms
+  Input:
+    Description: Name of the bucket in which the CloudTrail logs can be stored
+  Output:
+    Description: Outputs ID of all deployed resources
+
+Parameters:
+  KMSName:
+    Type: String
+    Description: Name of the KMS Key to be used
+  NotifyEmail:
+    Type: String
+    Description: Email Id to which the notifications related to security events are sent
+  KMSRegion:
+    Type: String
+    Description: KMS key region
+  AuditAccountId:
+    Type: String
+    Description: Audit account ID
+    MaxLength: 12
+    MinLength: 12
+  AuditS3Bucket:
+    Type: String
+    Description: Name of an S3 bucket to store CloudTrail logs.
+    ConstraintDescription: "Use only lower case letters, numbers and hyphens "
+    MinLength: 2
+    AllowedPattern: '[a-z0-9\-]+'  
+    
+Mappings:
+  StorageClassMapping:
+    us-east-1:
+      Value: GLACIER
+    us-east-2:
+      Value: GLACIER
+    us-west-2:
+      Value: GLACIER
+    us-west-1:
+      Value: GLACIER
+    eu-west-1:
+      Value: GLACIER
+    ca-central-1:
+      Value: GLACIER
+    eu-west-2:
+      Value: GLACIER
+    eu-central-1:
+      Value: STANDARD_IA
+    ap-southeast-2:
+      Value: GLACIER
+    ap-northeast-1:
+      Value: GLACIER
+    ap-south-1:
+      Value: GLACIER
+    ap-northeast-2:
+      Value: GLACIER
+    sa-east-1:
+      Value: STANDARD_IA
+Conditions:
+    IsGovCloud: !Equals [ us-gov-west-1, !Ref 'AWS::Region' ]
+    
+Resources:
+  rSecurityAlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      Subscription:
+        - Endpoint: !Ref NotifyEmail
+          Protocol: email
+  rCloudTrailLoggingLocal:
+    Type: AWS::CloudTrail::Trail
+    Properties:
+      S3BucketName: !Ref AuditS3Bucket
+      IsLogging: true
+      IsMultiRegionTrail: true
+      EnableLogFileValidation: true
+      IncludeGlobalServiceEvents: true
+      KMSKeyId: !Sub arn:aws:kms:${KMSRegion}:${AuditAccountId}:alias/${KMSName}
+      CloudWatchLogsLogGroupArn: !GetAtt [ rCloudTrailLogGroup, Arn ]
+      CloudWatchLogsRoleArn: !GetAtt [ rCloudWatchLogsRole, Arn ]
+      EventSelectors:
+        - IncludeManagementEvents: false
+          DataResources:
+            - Type: AWS::S3::Object
+              Values:
+              - 'arn:aws:s3:::'
+          ReadWriteType: All
+  rCloudWatchLogsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                  Service:
+                    - cloudtrail.amazonaws.com
+              Action:
+                - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: cloudwatchlogsrole
+          PolicyDocument:
+              Version: 2012-10-17
+              Statement:
+                - Sid: AWSCloudTrailCreateLogStream20141101
+                  Effect: Allow
+                  Action:
+                    - logs:CreateLogStream
+                  Resource: !Sub
+                    - arn:${Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${rCloudTrailLogGroup}:log-stream:*
+                    - { Partition: !If [ IsGovCloud, aws-us-gov, aws ] }
+                - Sid: AWSCloudTrailPutLogEvents20141101
+                  Effect: Allow
+                  Action:
+                    - logs:PutLogEvents
+                  Resource: !Sub
+                    - arn:${Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:${rCloudTrailLogGroup}:log-stream:*
+                    - { Partition: !If [ IsGovCloud, aws-us-gov, aws ] }
+  rCloudTrailRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                  Service:
+                    - ec2.amazonaws.com
+              Action:
+                - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: cloudtrail-limited-actions
+          PolicyDocument:
+              Version: 2012-10-17
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - s3:ListBucket
+                  Resource: !Sub
+                    - arn:${Partition}:s3:::${AuditS3Bucket}
+                    - { Partition: !If [ IsGovCloud, aws-us-gov, aws ] }
+                - Effect: Allow
+                  Action:
+                    - s3:PutObject
+                    - s3:GetObject
+                  Resource: !Sub
+                    - arn:${Partition}:s3:::${AuditS3Bucket}/*
+                    - { Partition: !If [ IsGovCloud, aws-us-gov, aws ] }
+  rCloudTrailProfile:
+    Type: AWS::IAM::InstanceProfile
+    DependsOn: rCloudTrailRole
+    Properties:
+      Path: /
+      Roles:
+        - !Ref rCloudTrailRole
+  rCloudTrailLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: 90
+  rIAMPolicyChangesMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref rCloudTrailLogGroup
+      FilterPattern: '{($.eventName=DeleteGroupPolicy)||($.eventName=DeleteRolePolicy)||($.eventName=DeleteUserPolicy)||($.eventName=PutGroupPolicy)||($.eventName=PutRolePolicy)||($.eventName=PutUserPolicy)||($.eventName=CreatePolicy)||($.eventName=DeletePolicy)||($.eventName=CreatePolicyVersion)||($.eventName=DeletePolicyVersion)||($.eventName=AttachRolePolicy)||($.eventName=DetachRolePolicy)||($.eventName=AttachUserPolicy)||($.eventName=DetachUserPolicy)||($.eventName=AttachGroupPolicy)||($.eventName=DetachGroupPolicy)}'
+      MetricTransformations:
+        - MetricNamespace: CloudTrailMetrics
+          MetricName: IAMPolicyEventCount
+          MetricValue: 1
+  rIAMPolicyChangesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: IAM Configuration changes detected!
+      AlarmActions:
+        - !Ref rSecurityAlarmTopic
+      MetricName: IAMPolicyEventCount
+      Namespace: CloudTrailMetrics
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      EvaluationPeriods: 1
+      Period: 300
+      Statistic: Sum
+      Threshold: 1
+  rIAMCreateAccessKeyAlarm:
+    Type: AWS::CloudWatch::Alarm
+    DependsOn: rIAMPolicyChangesAlarm
+    Properties:
+      AlarmDescription: 'Warning! A new IAM access key was created. Please be sure that this action was neccessary.'
+      AlarmActions:
+        - !Ref rSecurityAlarmTopic
+      MetricName: NewAccessKeyCreated
+      Namespace: CloudTrailMetrics
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      EvaluationPeriods: 1
+      Period: 300
+      Statistic: Sum
+      Threshold: 1
+  rIAMCreateAccessKey:
+    Type: AWS::Logs::MetricFilter
+    DependsOn: rIAMCreateAccessKeyAlarm
+    Properties:
+      LogGroupName: !Ref rCloudTrailLogGroup
+      FilterPattern: '{($.eventName=CreateAccessKey)}'
+      MetricTransformations:
+        - MetricNamespace: CloudTrailMetrics
+          MetricName: NewAccessKeyCreated
+          MetricValue: 1
+  rCloudTrailChangeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    DependsOn: rIAMCreateAccessKeyAlarm
+    Properties:
+      AlarmDescription: 'Warning! Changes to CloudTrail log configuration were detected in this account.'
+      AlarmActions:
+        - !Ref rSecurityAlarmTopic
+      MetricName: CloudTrailChangeCount
+      Namespace: CloudTrailMetrics
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      EvaluationPeriods: 1
+      Period: 300
+      Statistic: Sum
+      Threshold: 1
+  rCloudTrailChange:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref rCloudTrailLogGroup
+      FilterPattern: '{($.eventSource = cloudtrail.amazonaws.com) && (($.eventName != List*) && ($.eventName != Describe*) && ($.eventName != Get*) && ($.eventName != Lookup*) && ($.eventName != Lookup*))}'
+      MetricTransformations:
+        - MetricNamespace: CloudTrailMetrics
+          MetricName: CloudTrailChangeCount
+          MetricValue: 1
+Outputs:
+  rSecurityAlarmTopic:
+    Value: !Ref rSecurityAlarmTopic
+    Description: CloudWatch security alarm SNS topic
+  rCloudTrailLogGroup:
+    Value: !Ref rCloudTrailLogGroup
+    Description: Id of the CloudTrail Log Group
+  rCloudTrailLoggingLocal:
+    Value: !GetAtt rCloudTrailLoggingLocal.Arn
+    Description: Arn of the CloudTrail Trail
