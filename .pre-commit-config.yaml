@@ -4,5 +4,5 @@ repos:
     hooks:
     -   id: terrascan
         pass_filenames: false
-        args: [-l=Test/apps/public/] #NOTE: that this is the directory you created earlier to host your terraform
+        args: [-l=Test/apps/public/ -d]
         verbose: true
