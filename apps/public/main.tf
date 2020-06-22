@@ -144,3 +144,5 @@ resource "aws_security_group_rule" "ingress_elb" {
   protocol          = "tcp"
   cidr_blocks       = ["0.0.0.0/0"]
 }
+
+
