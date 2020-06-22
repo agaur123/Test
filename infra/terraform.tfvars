@@ -1,0 +1,15 @@
+name              = "customerA"
+aws_region        = "us-west-2"
+role_arn          = ""
+jenkins_job_name  = ""
+jenkins_build_number  = ""
+environment       = "dev"
+vpc_cidr          = "10.250.0.0/21"
+global_cidr       = "0.0.0.0/0"
+public_subnet_ids    = ["10.250.0.0/25", "10.250.0.128/25"]
+private_subnet_ids   = ["10.250.1.0/25", "10.250.1.128/25"]
+protected_subnet_ids = ["10.250.2.0/25", "10.250.2.128/25"]
+nat_subnet_ids      = ["10.250.3.0/25", "10.250.3.128/25"]
+enable_transit    = false
+enable_vpn_gateway  = false
+zone_name         = "CustomerA.internal."
