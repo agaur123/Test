@@ -72,7 +72,7 @@ resource "aws_security_group_rule" "egress_asg" {
   type              = "egress"
   from_port         = 0
   to_port           = 0
-  protocol          = "-1"/
+  protocol          = "-1"
   cidr_blocks       = ["0.0.0.0/0"]
 }
 
@@ -131,6 +131,16 @@ resource "aws_security_group_rule" "ingress_elb" {
   type              = "ingress"
   from_port         = "${lookup(var.elb_ingress_rules[count.index], "from_port")}"
   to_port           = "${lookup(var.elb_ingress_rules[count.index], "to_port")}"
+  protocol          = "tcp"
+  cidr_blocks       = ["0.0.0.0/0"]
+}
+
+resource "aws_security_group_rule" "ingress_elb" {
+  count             = "${length(var.elb_ingress_rules)}"
+  security_group_id = "${aws_security_group.sg_elb.id}"
+  type              = "ingress"
+  from_port         = "22"
+  to_port           = "22"
   protocol          = "tcp"
   cidr_blocks       = ["0.0.0.0/0"]
 }
