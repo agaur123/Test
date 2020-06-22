@@ -72,7 +72,7 @@ resource "aws_security_group_rule" "egress_asg" {
   type              = "egress"
   from_port         = 0
   to_port           = 0
-  protocol          = "-1"
+  protocol          = "-1"/
   cidr_blocks       = ["0.0.0.0/0"]
 }
 
