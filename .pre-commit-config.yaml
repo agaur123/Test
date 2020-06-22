@@ -4,5 +4,5 @@ repos:
     hooks:
     -   id: terrascan
         pass_filenames: false
-        args: [-l=Test/infra]
+        args: [-l=infra]
         verbose: true
